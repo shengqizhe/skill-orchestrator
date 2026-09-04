@@ -1,0 +1,6 @@
+# install.sh 必须保持 LF：bash 在 Windows 上遇到 CRLF 会报错
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text
+*.md text
+.gitattributes text
