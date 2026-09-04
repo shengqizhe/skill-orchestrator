@@ -1,0 +1,24 @@
+---
+name: neat-freak
+description: >-
+  Knowledge and governance closeout: reconcile project docs, rule files
+  (CLAUDE.md/AGENTS.md), authorized agent memory, and workspace residue with
+  what the code and runtime actually do, so the next session or the next
+  person starts from one current answer. Trigger when the user names
+  "neat-freak", "洁癖", or "/neat" — and also on clear knowledge-closeout
+  intent without the name: syncing or tidying project docs/rules/memory after
+  development ("把文档和记忆整理一下", "收尾时把文档同步掉", "docs 和代码对不上了"),
+  stale or conflicting CLAUDE.md/memory, a clean handoff to a teammate or a
+  fresh session, or auditing whether workspace rules are actually followed.
+  Do not trigger for pure coding/refactoring/debugging tasks, tidying data or
+  prose (JSON, 周报, changelog announcements), or a bare "整理" with no
+  project-knowledge context.
+compatibility: Requires filesystem read access. Writes and destructive actions follow the active agent, workspace, and user authorization rules. Git and rg improve verification; scripts/audit-inventory.sh needs Bash — without it, do the equivalent checks manually. Works on any Agent Skills platform.
+metadata:
+  version: "3.0.0"
+  category: knowledge-governance
+---
+
+# 洁癖 — Knowledge and Governance Closeout
+
+<!-- fixture `block-strip`: frontmatter 照抄自 c:\Users\PC\.trae\skills\neat-freak\SKILL.md，正文在首标题后截断 -->
