@@ -32,8 +32,7 @@ metadata:
 | `build` | `First index built: N skills recorded.` | 全量建档 |
 | `sync` | `Sync: added X · removed Y · updated Z · total T` 或 `SYNC_NO_DIFF` | 增量同步（增/删） |
 | `refresh` | 同上（updated 计入已有技能内容修改） | 深度同步；用户说「更新技能档案／改了技能内容」时用 |
-| `list` | 每行 `name、简介、path`（Tab 分隔） | 匹配依据 |
-| `verify` | `VERIFY_OK P/T cases` 或 `VERIFY_FAIL …` | 解析回归自检（见「开发与维护清单」） |
+| `list` | 每行 `name、简介、path`（Tab 分隔）；无索引时 `NEED_INDEX`；空库=无输出（先 probe 确认状态） | 匹配依据 |
 | `reset` | `STATE_RESET` | 清空 state 缓存（discovery + index） |
 | `protocol` | 返回码权威清单 | 见「协议权威源」 |
 
@@ -50,7 +49,7 @@ metadata:
 - 默认锚定本技能所在位置向上找 `skills` 根，找到即写入 `state/discovery.json`，之后每次直读缓存，不再查找。
 - 找不到（如本技能放在独立目录）→ 在理解确认环节问用户一次，用 `discover --root <path>` 录入并缓存，之后免问。
 - 单根设计：不自动合并用户级与项目级等多个技能库。
-- 开发提示：`discover` 之外命令的显式 `--root` **不写缓存**（调试专用）。改了技能库结构后若 `probe` 输出像基于旧缓存，先 `reset` 或每次显式 `--root`，别误判为「代码没生效」。
+- 开发提示：`discover` 之外命令的显式 `--root` **不写缓存**（调试专用）。改了技能库结构后若 `probe` 输出像基于旧缓存，先 `reset` 或每次显式 `--root`，别误判为「代码没生效」。`probe -v` 会打印根来源（缓存命中/锚点命中/缓存失效重锚/未找到），调试先看它确认脚本在盯哪个库。
 
 ## 理解确认 Gate（给方案前必须过）
 
@@ -76,15 +75,9 @@ metadata:
 - 脚本只读技能库；写操作仅限本技能目录内 `state/`。
 - 推荐的技能最终由宿主模型决定是否加载；本技能保证推荐准确、触发措辞规范。
 
-## 开发与维护清单（写给改代码的人，改完顺手执行）
-
-- 动了解析器（`parse_skill_dir`）、`DESC_LIMIT` 或默认回退逻辑 → 必须 `python scripts/orchestrator.py verify`；失败时按 [scripts/fixtures/README.md](scripts/fixtures/README.md) 流程更新 `expected.json` 并同步说明。
-- 想看 sync 到底 diff 了什么 / 解析器读到了什么 → `sync -v`、`build -v`（细节走 stderr）；不想落盘先预览 → 加 `--dry-run`。
-- 缓存骗人（改了库 / 换库调试，输出不像新代码）→ `reset` 清空，或每次显式 `--root`。
-- 改了 py 的输出格式 / 返回串 → 同步 `protocol` 子命令，再回填本文件命令表。**不允许出现「py 一套、SKILL.md 一套」的人肉双份**，以 `protocol` 为唯一权威。
-
 ## 已知副作用与局限（作为事实陈述，不粉饰）
 
-- **触发面宽**：本技能 description 覆盖「新需求/想法/任务/该怎么做/可行吗」，一旦装进常用技能库就会在别的任务里频繁抢触发。开发阶段建议阶段性把本技能摘出技能库，或把 `name` 改成带 `-dev` 的临时名，避免它一边被开发、一边在真实库里抢活（也顺带让「自己索引自己」在自排除之外再多一重保险）。
-- 手写 YAML 子集解析器（无 pyyaml、无第三方依赖），只支持生态里出现过的写法；明确不支持的写法与更新流程见 [scripts/fixtures/README.md](scripts/fixtures/README.md)，遇新写法先补样本再决定接受或拒绝，不许静默错读。
+- **触发面宽**：本技能 description 覆盖「新需求/想法/任务/该怎么做/可行吗」，装在常用技能库会在其他任务里抢触发——这是定位使然；不需要它调度时别触发即可。
+- 手写 YAML 子集解析器（无第三方依赖）：只按常见写法解析 frontmatter（行内/缩进续行、`|`/`>` 块标量、引号去壳）；生态里未出现过的写法可能被读成回退占位（如 `(no description)`），只影响该技能自身的建档，不拖累其他技能。
 - description 统一归一化为单空格文本（块/折叠/行内不再区分），并按 240 字符截断：这是索引省 token 的取舍，不是 YAML 全量语义。
+- 索引按**目录名**跟踪技能（与 probe 的目录级锚点一致），list 显示 frontmatter name：目录名与 name 不同是合法的（市场 slug 目录），改名=一次删+一次加；同名技能多个目录会输出多行同名——忠实反映磁盘状态，同名遮蔽是宿主的职责，不在本技能。

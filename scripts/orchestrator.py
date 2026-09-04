@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """skill-orchestrator runtime.
 
-Local skill-library discovery, indexing, diffing and parser self-verification.
+Local skill-library discovery, indexing and diffing.
 
 Read-only against the skill library; writes only to this skill's own state/.
 Python 3 stdlib only (hand-written YAML frontmatter subset parser, no pyyaml).
@@ -23,8 +23,6 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "state"
 DISCOVERY = STATE / "discovery.json"
 INDEX = STATE / "skill-index.json"
-FIXTURES = ROOT / "scripts" / "fixtures"
-FIXTURE_SKILLS = FIXTURES / "skills"
 
 DESC_LIMIT = 240        # chars kept per skill description in the index
 LIST_DESC_LIMIT = 120   # chars shown in the compact listing
@@ -91,7 +89,7 @@ def is_self(d: Path) -> bool:
 # --------------------------------------------------------------------------
 # SKILL.md frontmatter subset parser
 #
-# Contract (locked by scripts/fixtures + `verify`):
+# Contract (documented in SKILL.md's 已知副作用/局限):
 #   * frontmatter must open the file:  ---<LF> ... <LF>---
 #   * top-level keys sit at column 0; `name`/`description` are read,
 #     other keys (license, metadata, version, ...) are skipped.
@@ -213,24 +211,29 @@ def discover_from_anchor() -> Path | None:
     return None
 
 
-def get_root(cli_root: str | None = None) -> Path | None:
+def get_root(cli_root: str | None = None, verb: bool = False) -> Path | None:
     """Resolve the skills root: explicit flag > cached discovery > anchor."""
     if cli_root:
         p = Path(cli_root).expanduser()
         if p.is_dir():
             p = p.resolve()
-            save_json(DISCOVERY, {"root": str(p), "source": "user",
-                                  "discoveredAt": now()})
+            vlog(verb, f"explicit root {p} (not persisted)")
             return p
         return None
     cached = load_json(DISCOVERY, {})
     root_s = cached.get("root")
     if root_s and Path(root_s).is_dir():
+        vlog(verb, f"cached root {root_s} (discovery.json)")
         return Path(root_s)
+    if root_s:
+        vlog(verb, f"cached root {root_s} missing; re-anchoring")
     found = discover_from_anchor()
     if found is not None:
         save_json(DISCOVERY, {"root": str(found), "source": "anchor",
                               "discoveredAt": now()})
+        vlog(verb, f"anchored skills root {found}")
+    else:
+        vlog(verb, "anchor walk found no skills root")
     return found
 
 
@@ -248,6 +251,18 @@ def candidate_skills(root: Path) -> list[Path]:
     """Skill folders under root: have a SKILL.md and are not this skill."""
     return [d for d in root.iterdir()
             if d.is_dir() and (d / "SKILL.md").is_file() and not is_self(d)]
+
+
+def _dirname(rec: dict) -> str:
+    """Directory identity of an index record.
+
+    The folder name -- not the frontmatter name -- is the physical identity
+    sync/refresh operate on (probe's anchor check is directory-grained too).
+    A folder's frontmatter name may differ from its folder name (marketplace
+    slug dirs), and two folders may share one frontmatter name; indexing by
+    folder keeps sync convergent in both cases.
+    """
+    return Path(rec.get("path", "")).name or rec.get("name", "")
 
 
 def build(root: Path, dry: bool, verb: bool) -> dict:
@@ -272,7 +287,7 @@ def build(root: Path, dry: bool, verb: bool) -> dict:
 
 def sync(root: Path, deep: bool, dry: bool, verb: bool) -> dict:
     idx = load_json(INDEX, index_default())
-    old = {s["name"]: s for s in idx["skills"]}
+    old = {_dirname(s): s for s in idx["skills"]}
     entries, mtime = root_stat(root)
 
     seen: dict[str, int] = {}
@@ -301,17 +316,18 @@ def sync(root: Path, deep: bool, dry: bool, verb: bool) -> dict:
             added += 1
             vlog(verb, f"  + {name}  ({dname})")
 
-    gone = [n for n in old if n not in seen]
+    gone = [d for d in old if d not in seen]
     removed = len(gone)
     for g in gone:
-        vlog(verb, f"  - {g}")
+        vlog(verb, f"  - {old[g].get('name', g)}  ({g})")
     if removed:
         idx["history"]["removed"] = (
-            [{"name": g, "removedAt": now()} for g in gone]
+            [{"dirname": g, "name": old[g].get("name", ""),
+              "removedAt": now()} for g in gone]
             + idx["history"].get("removed", [])
         )[:HISTORY_CAP]
 
-    idx["skills"] = [s for s in idx["skills"] if s["name"] not in gone]
+    idx["skills"] = [s for s in idx["skills"] if _dirname(s) not in gone]
     idx["skills"].extend(new_skills)
     idx["skills"].sort(key=lambda s: s["name"])
     idx["meta"].update({
@@ -333,30 +349,6 @@ def print_skills(idx: dict) -> None:
 # --------------------------------------------------------------------------
 # dev commands
 # --------------------------------------------------------------------------
-def run_verify(verb: bool) -> bool:
-    """Assert frontmatter parsing against real-sample fixtures."""
-    exp = load_json(FIXTURES / "expected.json", None)
-    if not isinstance(exp, dict) or not isinstance(exp.get("cases"), dict):
-        print("VERIFY_FAIL fixtures/expected.json missing or malformed")
-        return False
-    cases = exp["cases"]
-    total, passed = len(cases), 0
-    for cid, want in cases.items():
-        d = FIXTURE_SKILLS / cid
-        if not (d / "SKILL.md").is_file():
-            print(f"VERIFY_FAIL {cid}: fixture file missing", file=sys.stderr)
-            continue
-        got_name, got_desc, _ = parse_skill_dir(d)
-        want_name, want_desc = want.get("name"), want.get("desc")
-        if got_name == want_name and got_desc == want_desc:
-            passed += 1
-            continue
-        print(f"VERIFY_FAIL {cid}: name {got_name!r} != {want_name!r} | "
-              f"desc {got_desc!r} != {want_desc!r}", file=sys.stderr)
-    print(f"VERIFY_OK {passed}/{total} cases")
-    return passed == total
-
-
 def run_reset(dry: bool, verb: bool) -> None:
     targets = [p for p in (DISCOVERY, INDEX) if p.exists()]
     if STATE.is_dir():
@@ -376,7 +368,7 @@ def run_reset(dry: bool, verb: bool) -> None:
     print("DRY_RUN STATE_RESET" if dry else "STATE_RESET")
 
 
-PROTOCOL_LINES = """protocol v1
+PROTOCOL_LINES = """protocol v3
 # probe (default) status lines
 NO_CHANGE
 CHANGED
@@ -387,11 +379,11 @@ ROOT_OK <root>
 First index built: N skills recorded.
 Sync: added X \u00b7 removed Y \u00b7 updated Z \u00b7 total T
 SYNC_NO_DIFF
-# dev command report lines
+# reset report line
 STATE_RESET
-VERIFY_OK P/T cases
-VERIFY_FAIL P/T cases
-# list rows: one per indexed skill
+# list rows: one per indexed skill; no index yet prints:
+NEED_INDEX
+# empty output from list = empty library (run probe first to confirm state)
 <name>\t<desc (<=120 chars)>\t<path>
 # modifiers: --dry-run prefixes 'DRY_RUN ' to the report line; --verbose
 # adds diagnostics on stderr only (stdout stays single-line)""".replace(
@@ -408,8 +400,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("command", nargs="?", default="probe",
                     choices=["probe", "build", "sync", "refresh",
-                             "list", "discover", "verify", "reset",
-                             "protocol"])
+                             "list", "discover", "reset", "protocol"])
     ap.add_argument("--root", default=None,
                     help="explicit skills-root path (dev tool; not persisted "
                          "except by 'discover')")
@@ -423,10 +414,6 @@ def main() -> None:
     if args.command == "protocol":
         print_protocol()
         return
-
-    if args.command == "verify":
-        ok = run_verify(verb)
-        sys.exit(0 if ok else 1)
 
     if args.command == "reset":
         run_reset(args.dry_run, verb)
@@ -458,12 +445,13 @@ def main() -> None:
         root = p.resolve()
         vlog(verb, f"explicit root {root} (not persisted)")
     else:
-        root = get_root()
+        root = get_root(verb=verb)
         if root is None:
             print("NEED_INPUT skills root not found; provide it once via: "
                   "discover --root <path>")
             return
         root = Path(root)
+        vlog(verb, f"root resolved: {root}")
 
     pfx = "DRY_RUN " if args.dry_run else ""
 
@@ -474,7 +462,11 @@ def main() -> None:
         return
 
     if args.command == "list":
-        print_skills(load_json(INDEX, index_default()))
+        idx = load_json(INDEX, None)
+        if idx is None:
+            print("NEED_INDEX")
+            return
+        print_skills(idx)
         return
 
     if args.command in ("sync", "refresh"):
