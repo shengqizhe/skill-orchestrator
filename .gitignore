@@ -1,6 +1,0 @@
-# runtime state - regenerated on first run; never ship
-state/
-
-# python artifacts
-__pycache__/
-*.pyc
