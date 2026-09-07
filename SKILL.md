@@ -14,6 +14,7 @@ metadata:
 
 - 技能目录里不预置 `state/`，由脚本首次运行自动生成；发布包不含 `state/`。
 - 所有命令：`python scripts/orchestrator.py <command> [options]`。
+- **执行位置**：脚本不依赖 cwd（按自身 `__file__` 定位技能目录），但命令里的相对路径 `scripts/...` 依赖 cwd。先 `cd` 到本技能目录再执行；宿主模型 cwd 通常不在技能目录，则须用本技能目录的绝对路径执行（如 `python <本技能目录绝对路径>/scripts/orchestrator.py <command>`），不要照字面在库外跑相对路径。
 - **本技能自身永不进索引**：build/sync 排除本技能所在文件夹，装进技能库运行也不会索引自己形成递归。
 
 ## 协议权威源
